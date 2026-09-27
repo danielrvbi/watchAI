@@ -32,8 +32,9 @@ private enum Stage1Validation {
         try await checkSearch(question: "What is the weather in Amsterdam now?", topic: "general")
         try await checkSearch(question: "What is the latest news in Amsterdam?", topic: "news")
         try await checkSearchFailure()
+        await checkSpeechAndInterruption()
         await checkStaleResponse()
-        print("Stage 1 validation passed: direct answers, independent requests, weather, news, search failure, stale response.")
+        print("Assistant validation passed: direct answers, independent requests, weather, news, search failure, speech interruption, stale response.")
     }
 
     private static func session() -> URLSession {
@@ -187,8 +188,28 @@ private enum Stage1Validation {
     }
 
     @MainActor
+    private static func checkSpeechAndInterruption() async {
+        let speech = RecordingSpeechOutput()
+        let model = AssistantViewModel(
+            answerRequest: { request in request },
+            speechOutput: speech
+        )
+        model.submit("First answer")
+        for _ in 0..<100 where model.answer != "First answer" { await Task.yield() }
+        precondition(model.answer == "First answer")
+        precondition(speech.spoken == ["First answer"] && speech.stopCount == 1)
+
+        model.submit("Second answer")
+        precondition(speech.stopCount == 2)
+        for _ in 0..<100 where model.answer != "Second answer" { await Task.yield() }
+        precondition(model.answer == "Second answer")
+        precondition(speech.spoken == ["First answer", "Second answer"])
+    }
+
+    @MainActor
     private static func checkStaleResponse() async {
         var olderStarted = false
+        let speech = RecordingSpeechOutput()
         let model = AssistantViewModel(answerRequest: { request in
             if request == "older" {
                 olderStarted = true
@@ -197,13 +218,23 @@ private enum Stage1Validation {
             }
             try? await Task.sleep(nanoseconds: 20_000_000)
             return "newer answer"
-        })
+        }, speechOutput: speech)
         model.submit("older")
         while !olderStarted { await Task.yield() }
         model.submit("newer")
         try? await Task.sleep(nanoseconds: 300_000_000)
         precondition(model.answer == "newer answer")
+        precondition(speech.spoken == ["newer answer"])
     }
+}
+
+@MainActor
+private final class RecordingSpeechOutput: SpeechOutput {
+    var spoken: [String] = []
+    var stopCount = 0
+
+    func speak(_ text: String) { spoken.append(text) }
+    func stop() { stopCount += 1 }
 }
 
 private enum ValidationError: Error {
