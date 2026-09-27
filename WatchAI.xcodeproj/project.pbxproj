@@ -33,13 +33,28 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A10000000000000000000001 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "WatchAI Watch App/Config/Secrets.xcconfig"; sourceTree = "<group>"; };
 		898EF0B830696FD0007378D6 /* WatchAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WatchAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		898EF0BE30696FD0007378D6 /* WatchAI Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "WatchAI Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A10000000000000000000002 /* Config files excluded from Watch app resources */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Config/Secrets.xcconfig",
+				"Config/Secrets.example.xcconfig",
+			);
+			target = 898EF0BD30696FD0007378D6 /* WatchAI Watch App */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		898EF0C230696FD0007378D6 /* WatchAI Watch App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A10000000000000000000002 /* Config files excluded from Watch app resources */,
+			);
 			path = "WatchAI Watch App";
 			sourceTree = "<group>";
 		};
@@ -58,6 +73,7 @@
 			isa = PBXGroup;
 			children = (
 				898EF0C230696FD0007378D6 /* WatchAI Watch App */,
+				A10000000000000000000001 /* Secrets.xcconfig */,
 				898EF0B930696FD0007378D6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -295,6 +311,7 @@
 		};
 		898EF0CC30696FD1007378D6 /* Debug configuration for PBXNativeTarget "WatchAI Watch App" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000001 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -302,7 +319,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RRH5AM5544;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/WatchApp-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = WatchAI;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
@@ -328,6 +346,7 @@
 		};
 		898EF0CD30696FD1007378D6 /* Release configuration for PBXNativeTarget "WatchAI Watch App" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000001 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -335,7 +354,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RRH5AM5544;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/WatchApp-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = WatchAI;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
