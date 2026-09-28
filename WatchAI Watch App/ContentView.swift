@@ -37,6 +37,8 @@ private struct TypeInputView: View {
                     Text(answer)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            } else if assistant.isLoading {
+                ThinkingView()
             } else {
                 Spacer(minLength: 0)
             }
@@ -75,6 +77,8 @@ private struct VoiceInputView: View {
                     Text(answer)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            } else if assistant.isLoading {
+                ThinkingView()
             } else if !assistant.liveTranscript.isEmpty {
                 ScrollView {
                     Text(assistant.liveTranscript)
@@ -100,6 +104,36 @@ private struct VoiceInputView: View {
         }
         .padding(.horizontal, 8)
         .onDisappear { assistant.cancelCurrentRequest() }
+    }
+}
+
+private struct ThinkingView: View {
+    @State private var startDate = Date()
+    private let frameCount = 9
+    private let frameDuration = 0.12
+
+    var body: some View {
+        TimelineView(.periodic(from: startDate, by: frameDuration)) { timeline in
+            let step = max(0, Int(timeline.date.timeIntervalSince(startDate) / frameDuration))
+            let cycle = 2 * (frameCount - 1)
+            let position = step % cycle
+            let frame = position < frameCount ? position + 1 : cycle - position + 1
+
+            VStack(spacing: 4) {
+                Image("loading_frames/loading_frame\(frame)")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 150, maxHeight: 82)
+                    .accessibilityHidden(true)
+
+                Text("Thinking…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Thinking")
+        }
     }
 }
 

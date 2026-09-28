@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 final class AssistantViewModel: ObservableObject {
     @Published private(set) var answer: String?
+    @Published private(set) var isLoading = false
 #if os(watchOS)
     @Published private(set) var liveTranscript = ""
     @Published private(set) var voiceError: String?
@@ -50,8 +51,12 @@ final class AssistantViewModel: ObservableObject {
         let requestID = UUID()
         latestRequestID = requestID
         answer = nil
+        isLoading = true
 
         activeRequest = Task {
+            defer {
+                if latestRequestID == requestID { isLoading = false }
+            }
             do {
 #if os(watchOS)
                 if let priorVoiceTask { await priorVoiceTask.value }
@@ -78,6 +83,7 @@ final class AssistantViewModel: ObservableObject {
         latestRequestID = UUID()
         speechOutput.stop()
         answer = nil
+        isLoading = false
 #if os(watchOS)
         cancelVoiceInput()
 #endif
@@ -103,6 +109,7 @@ final class AssistantViewModel: ObservableObject {
         voiceInputActive = false
         liveTranscript = ""
         voiceError = nil
+        isLoading = false
     }
 
     private func startVoiceInput() {
@@ -193,6 +200,7 @@ final class AssistantViewModel: ObservableObject {
         guard isRecording else { return }
         isRecording = false
         if let microphone, microphone.isCapturing {
+            isLoading = true
             microphone.stop()
         } else {
             cancelVoiceInput()
@@ -205,6 +213,7 @@ final class AssistantViewModel: ObservableObject {
         voxtral = nil
         isRecording = false
         voiceInputActive = false
+        isLoading = false
     }
 #endif
 

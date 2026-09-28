@@ -196,14 +196,18 @@ private enum Stage1Validation {
             speechOutput: speech
         )
         model.submit("First answer")
+        precondition(model.isLoading)
         for _ in 0..<100 where model.answer != "First answer" { await Task.yield() }
         precondition(model.answer == "First answer")
+        precondition(!model.isLoading)
         precondition(speech.spoken == ["First answer"] && speech.stopCount == 1)
 
         model.submit("Second answer")
+        precondition(model.isLoading)
         precondition(speech.stopCount == 2)
         for _ in 0..<100 where model.answer != "Second answer" { await Task.yield() }
         precondition(model.answer == "Second answer")
+        precondition(!model.isLoading)
         precondition(speech.spoken == ["First answer", "Second answer"])
     }
 
@@ -221,10 +225,13 @@ private enum Stage1Validation {
             return "newer answer"
         }, speechOutput: speech)
         model.submit("older")
+        precondition(model.isLoading)
         while !olderStarted { await Task.yield() }
         model.submit("newer")
+        precondition(model.isLoading)
         try? await Task.sleep(nanoseconds: 300_000_000)
         precondition(model.answer == "newer answer")
+        precondition(!model.isLoading)
         precondition(speech.spoken == ["newer answer"])
     }
 
@@ -238,8 +245,10 @@ private enum Stage1Validation {
             return "late answer"
         }, speechOutput: speech)
         model.submit("Question")
+        precondition(model.isLoading)
         while !requestStarted { await Task.yield() }
         model.cancelCurrentRequest()
+        precondition(!model.isLoading)
         try? await Task.sleep(nanoseconds: 150_000_000)
         precondition(model.answer == nil)
         precondition(speech.spoken.isEmpty)
