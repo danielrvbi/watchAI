@@ -22,6 +22,8 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>MistralAPIKey</key>
     <string>$(MISTRAL_API_KEY)</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Record your spoken request for realtime transcription.</string>
     <key>TavilyAPIKey</key>
     <string>$(TAVILY_KEY)</string>
     <key>UISupportedInterfaceOrientations</key>

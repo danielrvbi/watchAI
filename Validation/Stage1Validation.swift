@@ -34,7 +34,8 @@ private enum Stage1Validation {
         try await checkSearchFailure()
         await checkSpeechAndInterruption()
         await checkStaleResponse()
-        print("Assistant validation passed: direct answers, independent requests, weather, news, search failure, speech interruption, stale response.")
+        await checkModeExitCancellation()
+        print("Assistant validation passed: direct answers, independent requests, weather, news, search failure, speech interruption, stale response, mode exit cancellation.")
     }
 
     private static func session() -> URLSession {
@@ -225,6 +226,24 @@ private enum Stage1Validation {
         try? await Task.sleep(nanoseconds: 300_000_000)
         precondition(model.answer == "newer answer")
         precondition(speech.spoken == ["newer answer"])
+    }
+
+    @MainActor
+    private static func checkModeExitCancellation() async {
+        var requestStarted = false
+        let speech = RecordingSpeechOutput()
+        let model = AssistantViewModel(answerRequest: { _ in
+            requestStarted = true
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            return "late answer"
+        }, speechOutput: speech)
+        model.submit("Question")
+        while !requestStarted { await Task.yield() }
+        model.cancelCurrentRequest()
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        precondition(model.answer == nil)
+        precondition(speech.spoken.isEmpty)
+        precondition(speech.stopCount == 2)
     }
 }
 
