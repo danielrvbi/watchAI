@@ -40,14 +40,22 @@ private enum Stage1Validation {
             language: .spanish,
             answer: "Ahora hace 18 grados."
         )
+        try await checkSearch(
+            question: "What about tomorrow?",
+            topic: "general",
+            history: [ConversationTurn(user: "What is the weather in Madrid?", assistant: "It is 18 degrees.")]
+        )
         try await checkSearchFailure()
+        try await checkInvalidRoutes()
+        try await checkSearchStateIsEphemeral()
         await checkSpeechAndInterruption()
         await checkConversationMemory()
         await checkSpanishQueryFlow()
         await checkSpanishAnswerError()
+        await checkInvalidRouteViewModel()
         await checkStaleResponse()
         await checkModeExitCancellation()
-        print("Assistant validation passed: English and Spanish queries, conversation history, search, answer errors, speech, interruption, stale response, mode exit cancellation.")
+        print("Assistant validation passed: routing, English and Spanish answers, conversation history, search and failures, ephemeral results, speech, interruption, stale response, and cancellation.")
     }
 
     private static func checkLanguageDetection() {
@@ -64,11 +72,10 @@ private enum Stage1Validation {
         return URLSession(configuration: configuration)
     }
 
-    private static func service(with session: URLSession) -> MistralService {
-        MistralService(
-            apiKey: "test-mistral",
-            tavily: TavilyService(apiKey: "test-tavily", session: session),
-            session: session
+    private static func chain(with session: URLSession) -> MiniChain {
+        MiniChain(
+            mistral: MistralService(apiKey: "test-mistral", session: session),
+            tavily: TavilyService(apiKey: "test-tavily", session: session)
         )
     }
 
@@ -104,17 +111,22 @@ private enum Stage1Validation {
         try json(["choices": [["message": ["role": "assistant", "content": content]]]])
     }
 
-    private static func toolCall(query: String, topic: String) throws -> Data {
-        let arguments = try json(["query": query, "topic": topic])
-        return try json(["choices": [["message": [
-            "role": "assistant",
-            "content": NSNull(),
-            "tool_calls": [[
-                "id": "search-1",
-                "type": "function",
-                "function": ["name": "tavily_search", "arguments": String(decoding: arguments, as: UTF8.self)]
-            ]]
-        ]]]])
+    private static func routeCompletion(query: String? = nil, topic: String? = nil) throws -> Data {
+        let route: [String: Any] = [
+            "webSearch": query != nil,
+            "tavilyQuery": query ?? NSNull(),
+            "tavilyTopic": topic ?? NSNull()
+        ]
+        return try completion(String(decoding: json(route), as: UTF8.self))
+    }
+
+    private static func isRouteRequest(_ requestBody: [String: Any]) -> Bool {
+        (requestBody["response_format"] as? [String: String])?["type"] == "json_object"
+    }
+
+    private static func assertNoTools(_ requestBody: [String: Any]) {
+        precondition(requestBody["tools"] == nil)
+        precondition(requestBody["tool_choice"] == nil)
     }
 
     private static func checkDirectAnswer(question: String, answer: String) async throws {
@@ -124,11 +136,26 @@ private enum Stage1Validation {
             calls += 1
             precondition(request.url?.host == "api.mistral.ai")
             let requestBody = try body(request)
-            precondition((requestBody["tools"] as? [[String: Any]])?.count == 1)
+            assertNoTools(requestBody)
+            let messages = requestBody["messages"] as? [[String: Any]] ?? []
+            precondition(messages.last?["content"] as? String == question)
+            if calls == 1 {
+                precondition(isRouteRequest(requestBody))
+                precondition((messages.first?["content"] as? String)?.contains("JSON object") == true)
+                return (200, try routeCompletion())
+            }
+            precondition(calls == 2 && !isRouteRequest(requestBody))
+            precondition(requestBody["response_format"] == nil)
+            precondition(messages.map { $0["role"] as? String } == ["system", "system", "user"])
+            precondition((messages.first?["content"] as? String)?
+                .contains("name the specific result's publisher or site") == false)
+            precondition((messages[1]["content"] as? String)?.contains("Current local date and time") == true)
             return (200, try completion(answer))
         }
-        let result = try await service(with: session).answer(to: question, language: .english)
-        precondition(result == answer && calls == 1)
+        let result = try await chain(with: session).invoke(
+            userMessage: question, history: [], language: .english
+        )
+        precondition(result == answer && calls == 2)
     }
 
     private static func checkLanguageRequests() async throws {
@@ -139,20 +166,26 @@ private enum Stage1Validation {
         ]
         var calls = 0
         MockURLProtocol.respond = { request in
-            let messages = try body(request)["messages"] as? [[String: Any]] ?? []
-            let (query, language) = requests[calls]
+            let requestBody = try body(request)
+            let messages = requestBody["messages"] as? [[String: Any]] ?? []
+            let (query, language) = requests[calls / 2]
             precondition(messages.last?["content"] as? String == query)
+            calls += 1
+            if isRouteRequest(requestBody) {
+                precondition(calls % 2 == 1)
+                return (200, try routeCompletion())
+            }
+            precondition(calls % 2 == 0)
             precondition((messages.first?["content"] as? String)?
                 .contains("Answer the newest user message in \(language.name)") == true)
-            calls += 1
             return (200, try completion(language == .spanish ? "Son las 19:30." : "It is 19:30."))
         }
-        let assistant = service(with: session)
+        let assistant = chain(with: session)
         for (query, language) in requests {
-            let answer = try await assistant.answer(to: query, language: language)
+            let answer = try await assistant.invoke(userMessage: query, history: [], language: language)
             precondition(answer == (language == .spanish ? "Son las 19:30." : "It is 19:30."))
         }
-        precondition(calls == requests.count)
+        precondition(calls == requests.count * 2)
     }
 
     private static func checkConversationMessages() async throws {
@@ -162,46 +195,61 @@ private enum Stage1Validation {
         ]
         let latest = "What about tomorrow?"
         let session = session()
+        var calls = 0
         MockURLProtocol.respond = { request in
-            let messages = try body(request)["messages"] as? [[String: Any]] ?? []
-            precondition(messages.map { $0["role"] as? String } ==
-                ["system", "system", "user", "assistant", "user", "assistant", "user"])
-            precondition((messages.first?["content"] as? String)?
-                .contains("The final user message is the new request") == true)
-            precondition(messages.dropFirst(2).compactMap { $0["content"] as? String } == [
+            calls += 1
+            let requestBody = try body(request)
+            let messages = requestBody["messages"] as? [[String: Any]] ?? []
+            let historyStart = isRouteRequest(requestBody) ? 1 : 2
+            precondition(messages.dropFirst(historyStart).compactMap { $0["content"] as? String } == [
                 history[0].user, history[0].assistant,
                 history[1].user, history[1].assistant,
                 latest
             ])
+            if isRouteRequest(requestBody) {
+                precondition(messages.map { $0["role"] as? String } ==
+                    ["system", "user", "assistant", "user", "assistant", "user"])
+                return (200, try routeCompletion())
+            }
+            precondition(messages.map { $0["role"] as? String } ==
+                ["system", "system", "user", "assistant", "user", "assistant", "user"])
+            precondition((messages.first?["content"] as? String)?
+                .contains("The final user message is the new request") == true)
             return (200, try completion("Tomorrow will be dry too."))
         }
-        let answer = try await service(with: session).answer(
-            to: latest, language: .english, history: history
+        let answer = try await chain(with: session).invoke(
+            userMessage: latest, history: history, language: .english
         )
-        precondition(answer == "Tomorrow will be dry too.")
+        precondition(answer == "Tomorrow will be dry too." && calls == 2)
     }
 
     private static func checkIndependentRequests() async throws {
         let session = session()
-        let assistant = service(with: session)
+        let assistant = chain(with: session)
         var calls = 0
         MockURLProtocol.respond = { request in
             calls += 1
-            let messages = try body(request)["messages"] as? [[String: Any]] ?? []
+            let requestBody = try body(request)
+            let messages = requestBody["messages"] as? [[String: Any]] ?? []
+            precondition(messages.last?["content"] as? String == "Question \((calls + 1) / 2)")
+            if isRouteRequest(requestBody) {
+                precondition(messages.count == 2)
+                return (200, try routeCompletion())
+            }
             precondition(messages.count == 3)
-            precondition(messages.last?["content"] as? String == "Question \(calls)")
-            return (200, try completion("Answer \(calls)"))
+            return (200, try completion("Answer \(calls / 2)"))
         }
-        let first = try await assistant.answer(to: "Question 1", language: .english)
-        let second = try await assistant.answer(to: "Question 2", language: .english)
-        precondition(first == "Answer 1" && second == "Answer 2")
+        let first = try await assistant.invoke(userMessage: "Question 1", history: [], language: .english)
+        let second = try await assistant.invoke(userMessage: "Question 2", history: [], language: .english)
+        precondition(first == "Answer 1" && second == "Answer 2" && calls == 4)
     }
 
     private static func checkSearch(
         question: String,
         topic: String,
         language: AssistantLanguage = .english,
-        answer: String = "Current answer from search."
+        answer: String = "Current answer from search.",
+        history: [ConversationTurn] = []
     ) async throws {
         let session = session()
         var mistralCalls = 0
@@ -210,20 +258,36 @@ private enum Stage1Validation {
             switch request.url?.host {
             case "api.mistral.ai":
                 mistralCalls += 1
-                let messages = try body(request)["messages"] as? [[String: Any]] ?? []
+                let requestBody = try body(request)
+                assertNoTools(requestBody)
+                let messages = requestBody["messages"] as? [[String: Any]] ?? []
+                precondition(messages.last?["content"] as? String == question)
+                if mistralCalls == 1 {
+                    precondition(isRouteRequest(requestBody))
+                    precondition(messages.count == 2 + history.count * 2)
+                    precondition(messages.dropFirst().dropLast().compactMap { $0["content"] as? String } ==
+                        history.flatMap { [$0.user, $0.assistant] })
+                    return (200, try routeCompletion(query: question, topic: topic))
+                }
+                precondition(!isRouteRequest(requestBody))
+                precondition(messages.map { $0["role"] as? String } ==
+                    ["system", "system", "system"] +
+                    Array(repeating: ["user", "assistant"], count: history.count).flatMap { $0 } + ["user"])
                 precondition((messages.first?["content"] as? String)?
                     .contains("Answer the newest user message in \(language.name)") == true)
-                precondition(messages[2]["content"] as? String == question)
-                if mistralCalls == 1 {
-                    return (200, try toolCall(query: question, topic: topic))
-                }
-                precondition(messages.map { $0["role"] as? String } ==
-                             ["system", "system", "user", "assistant", "tool"])
-                precondition((messages.last?["content"] as? String)?.contains("Test result") == true)
+                precondition((messages.first?["content"] as? String)?
+                    .contains("name the specific result's publisher or site") == true)
+                precondition((messages.first?["content"] as? String)?
+                    .contains("do not present an older value as current") == true)
+                precondition((messages[2]["content"] as? String)?.contains("Test result") == true)
+                precondition((messages[2]["content"] as? String)?.contains("2026-09-27") == true)
+                precondition(messages.dropFirst(3).dropLast().compactMap { $0["content"] as? String } ==
+                    history.flatMap { [$0.user, $0.assistant] })
                 return (200, try completion(answer))
             case "api.tavily.com":
                 tavilyCalls += 1
                 let searchBody = try body(request)
+                precondition(searchBody["query"] as? String == question)
                 precondition(searchBody["topic"] as? String == topic)
                 return (200, try json(["results": [[
                     "title": "Test result",
@@ -235,7 +299,9 @@ private enum Stage1Validation {
                 throw ValidationError.badRequest
             }
         }
-        let result = try await service(with: session).answer(to: question, language: language)
+        let result = try await chain(with: session).invoke(
+            userMessage: question, history: history, language: language
+        )
         precondition(result == answer)
         precondition(mistralCalls == 2 && tavilyCalls == 1)
     }
@@ -248,12 +314,15 @@ private enum Stage1Validation {
             case "api.mistral.ai":
                 mistralCalls += 1
                 if mistralCalls == 1 {
-                    return (200, try toolCall(query: "Weather now", topic: "general"))
+                    let requestBody = try body(request)
+                    precondition(isRouteRequest(requestBody))
+                    return (200, try routeCompletion(query: "Weather now", topic: "general"))
                 }
                 let requestBody = try body(request)
-                precondition(requestBody["tools"] == nil)
+                precondition(!isRouteRequest(requestBody))
                 let messages = requestBody["messages"] as? [[String: Any]] ?? []
-                precondition((messages.last?["content"] as? String)?.contains("Search is unavailable") == true)
+                precondition((messages[2]["content"] as? String)?.contains("Search is unavailable") == true)
+                precondition(messages.last?["content"] as? String == "Weather now")
                 return (200, try completion("I can't check the weather right now. Please try again later."))
             case "api.tavily.com":
                 return (500, Data())
@@ -261,9 +330,101 @@ private enum Stage1Validation {
                 throw ValidationError.badRequest
             }
         }
-        let result = try await service(with: session).answer(to: "Weather now", language: .english)
+        let result = try await chain(with: session).invoke(
+            userMessage: "Weather now", history: [], language: .english
+        )
         precondition(result == "I can't check the weather right now. Please try again later.")
         precondition(mistralCalls == 2)
+    }
+
+    private static func checkInvalidRoutes() async throws {
+        let invalidReplies = [
+            "not JSON",
+            #"{"webSearch":false}"#,
+            #"{"webSearch":true,"tavilyQuery":"Weather now"}"#,
+            #"{"webSearch":true,"tavilyQuery":"  ","tavilyTopic":"general"}"#,
+            #"{"webSearch":true,"tavilyQuery":"Weather now","tavilyTopic":"invalid"}"#,
+            #"{"webSearch":false,"tavilyQuery":"Weather now","tavilyTopic":null}"#
+        ]
+        for reply in invalidReplies {
+            let session = session()
+            var calls = 0
+            MockURLProtocol.respond = { request in
+                calls += 1
+                precondition(request.url?.host == "api.mistral.ai")
+                let requestBody = try body(request)
+                precondition(isRouteRequest(requestBody))
+                return (200, try completion(reply))
+            }
+            do {
+                _ = try await chain(with: session).invoke(
+                    userMessage: "Question", history: [], language: .english
+                )
+                preconditionFailure("Invalid route was accepted")
+            } catch {
+                precondition(calls == 1)
+            }
+        }
+    }
+
+    private static func checkSearchStateIsEphemeral() async throws {
+        let session = session()
+        let chain = chain(with: session)
+        var mistralCalls = 0
+        var tavilyCalls = 0
+        MockURLProtocol.respond = { request in
+            switch request.url?.host {
+            case "api.mistral.ai":
+                mistralCalls += 1
+                let requestBody = try body(request)
+                let messages = requestBody["messages"] as? [[String: Any]] ?? []
+                if mistralCalls >= 3 {
+                    precondition(!messages.contains {
+                        ($0["content"] as? String)?.contains("SECRET_SEARCH_TOKEN") == true
+                    })
+                    precondition(messages.dropLast().compactMap { $0["content"] as? String }
+                        .contains("First answer."))
+                }
+                switch mistralCalls {
+                case 1:
+                    precondition(isRouteRequest(requestBody))
+                    return (200, try routeCompletion(query: "Weather now", topic: "general"))
+                case 2:
+                    precondition(!isRouteRequest(requestBody))
+                    precondition(messages.contains {
+                        ($0["content"] as? String)?.contains("SECRET_SEARCH_TOKEN") == true
+                    })
+                    return (200, try completion("First answer."))
+                case 3:
+                    precondition(isRouteRequest(requestBody))
+                    return (200, try routeCompletion())
+                case 4:
+                    precondition(!isRouteRequest(requestBody))
+                    return (200, try completion("Second answer."))
+                default:
+                    throw ValidationError.badRequest
+                }
+            case "api.tavily.com":
+                tavilyCalls += 1
+                return (200, try json(["results": [[
+                    "title": "SECRET_SEARCH_TOKEN",
+                    "url": "https://example.com/weather",
+                    "content": "Current fact"
+                ]]]))
+            default:
+                throw ValidationError.badRequest
+            }
+        }
+        let first = try await chain.invoke(
+            userMessage: "Weather now", history: [], language: .english
+        )
+        let second = try await chain.invoke(
+            userMessage: "And a general question?",
+            history: [ConversationTurn(user: "Weather now", assistant: first)],
+            language: .english
+        )
+        precondition(first == "First answer." && second == "Second answer.")
+        precondition(mistralCalls == 4 && tavilyCalls == 1)
     }
 
     @MainActor
@@ -332,6 +493,25 @@ private enum Stage1Validation {
         precondition(speech.languages == [.spanish])
         precondition(speech.spoken == [AssistantLanguage.spanish.answerUnavailableMessage])
         precondition(model.conversation.isEmpty)
+    }
+
+    @MainActor
+    private static func checkInvalidRouteViewModel() async {
+        let session = session()
+        let assistant = chain(with: session)
+        MockURLProtocol.respond = { request in
+            precondition(request.url?.host == "api.mistral.ai")
+            return (200, try completion(#"{"webSearch":true,"tavilyQuery":"","tavilyTopic":"general"}"#))
+        }
+        let speech = RecordingSpeechOutput()
+        let model = AssistantViewModel(answerRequest: { request, language, history in
+            try await assistant.invoke(userMessage: request, history: history, language: language)
+        }, speechOutput: speech)
+        model.submit("What is the weather now?")
+        for _ in 0..<100 where model.answer == nil { await Task.yield() }
+        precondition(model.answer == AssistantLanguage.english.answerUnavailableMessage)
+        precondition(model.conversation.isEmpty)
+        precondition(speech.spoken == [AssistantLanguage.english.answerUnavailableMessage])
     }
 
     @MainActor
