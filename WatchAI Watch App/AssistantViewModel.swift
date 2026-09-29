@@ -35,11 +35,15 @@ final class AssistantViewModel: ObservableObject {
                   let tavilyKey = Self.key(named: "TavilyAPIKey") else {
                 throw AssistantError.missingConfiguration
             }
-            let service = MistralService(
-                apiKey: mistralKey,
+            let miniChain = MiniChain(
+                mistral: MistralService(apiKey: mistralKey),
                 tavily: TavilyService(apiKey: tavilyKey)
             )
-            return try await service.answer(to: request, language: language, history: history)
+            return try await miniChain.invoke(
+                userMessage: request,
+                history: history,
+                language: language
+            )
         }
     }
 
