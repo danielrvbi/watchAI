@@ -13,10 +13,11 @@ final class AssistantViewModel: ObservableObject {
     @Published private(set) var voiceInputActive = false
 #endif
 
-    private let answerRequest: @MainActor (String) async throws -> String
+    private let answerRequest: @MainActor (String, AssistantLanguage, [ConversationTurn]) async throws -> String
     private let speechOutput: SpeechOutput
     private var activeRequest: Task<Void, Never>?
     private var latestRequestID = UUID()
+    private(set) var conversation: [ConversationTurn] = []
 #if os(watchOS)
     private var voiceTask: Task<Void, Never>?
     private var voiceRequestID = UUID()
@@ -25,11 +26,11 @@ final class AssistantViewModel: ObservableObject {
 #endif
 
     init(
-        answerRequest: (@MainActor (String) async throws -> String)? = nil,
+        answerRequest: (@MainActor (String, AssistantLanguage, [ConversationTurn]) async throws -> String)? = nil,
         speechOutput: SpeechOutput? = nil
     ) {
         self.speechOutput = speechOutput ?? AppleSpeechOutput()
-        self.answerRequest = answerRequest ?? { request in
+        self.answerRequest = answerRequest ?? { request, language, history in
             guard let mistralKey = Self.key(named: "MistralAPIKey"),
                   let tavilyKey = Self.key(named: "TavilyAPIKey") else {
                 throw AssistantError.missingConfiguration
@@ -38,11 +39,13 @@ final class AssistantViewModel: ObservableObject {
                 apiKey: mistralKey,
                 tavily: TavilyService(apiKey: tavilyKey)
             )
-            return try await service.answer(to: request)
+            return try await service.answer(to: request, language: language, history: history)
         }
     }
 
     func submit(_ request: String) {
+        let language = AssistantLanguage.detect(in: request)
+        let history = conversation
         speechOutput.stop()
         activeRequest?.cancel()
 #if os(watchOS)
@@ -62,17 +65,18 @@ final class AssistantViewModel: ObservableObject {
                 if let priorVoiceTask { await priorVoiceTask.value }
 #endif
                 try Task.checkCancellation()
-                let response = try await answerRequest(request)
+                let response = try await answerRequest(request, language, history)
                 guard !Task.isCancelled, latestRequestID == requestID else { return }
-                present(response)
+                conversation.append(ConversationTurn(user: request, assistant: response))
+                present(response, language: language)
             } catch is CancellationError {
                 return
             } catch {
                 guard !Task.isCancelled, latestRequestID == requestID else { return }
                 let response = error is AssistantError
-                    ? "The app is missing its API configuration."
-                    : "I couldn't get an answer right now. Please try again."
-                present(response)
+                    ? language.missingConfigurationMessage
+                    : language.answerUnavailableMessage
+                present(response, language: language)
             }
         }
     }
@@ -217,12 +221,12 @@ final class AssistantViewModel: ObservableObject {
     }
 #endif
 
-    private func present(_ response: String) {
+    private func present(_ response: String, language: AssistantLanguage) {
 #if os(watchOS)
         liveTranscript = ""
 #endif
         answer = response
-        speechOutput.speak(response)
+        speechOutput.speak(response, language: language)
     }
 
     private static func key(named name: String) -> String? {
@@ -238,7 +242,7 @@ private enum AssistantError: Error {
 
 @MainActor
 protocol SpeechOutput {
-    func speak(_ text: String)
+    func speak(_ text: String, language: AssistantLanguage)
     func stop()
 }
 
@@ -249,10 +253,10 @@ private final class AppleSpeechOutput: SpeechOutput {
     private var playbackTask: Task<Void, Never>?
 #endif
 
-    func speak(_ text: String) {
+    func speak(_ text: String, language: AssistantLanguage) {
         stop()
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = Self.bestAvailableVoice()
+        utterance.voice = Self.bestAvailableVoice(for: language)
 #if os(watchOS)
         playbackTask = Task { [weak self] in
             do {
@@ -282,11 +286,12 @@ private final class AppleSpeechOutput: SpeechOutput {
         synthesizer.stopSpeaking(at: .immediate)
     }
 
-    private static func bestAvailableVoice() -> AVSpeechSynthesisVoice? {
-        let language = AVSpeechSynthesisVoice.currentLanguageCode()
-        let primaryLanguage = language.split(separator: "-").first?.lowercased()
+    private static func bestAvailableVoice(for language: AssistantLanguage) -> AVSpeechSynthesisVoice? {
+        let watchLanguageCode = AVSpeechSynthesisVoice.currentLanguageCode()
+        let preferredVoiceCode = watchLanguageCode.lowercased().hasPrefix(language.code)
+            ? watchLanguageCode : language.defaultVoiceCode
         let voices = AVSpeechSynthesisVoice.speechVoices().filter { voice in
-            voice.language.split(separator: "-").first?.lowercased() == primaryLanguage
+            voice.language.split(separator: "-").first?.lowercased() == language.code
                 && !voice.voiceTraits.contains(.isNoveltyVoice)
                 && !voice.voiceTraits.contains(.isPersonalVoice)
         }
@@ -295,9 +300,9 @@ private final class AppleSpeechOutput: SpeechOutput {
             if first.quality != second.quality {
                 return first.quality.rawValue < second.quality.rawValue
             }
-            let firstMatchesLocale = first.language.caseInsensitiveCompare(language) == .orderedSame
-            let secondMatchesLocale = second.language.caseInsensitiveCompare(language) == .orderedSame
+            let firstMatchesLocale = first.language.caseInsensitiveCompare(preferredVoiceCode) == .orderedSame
+            let secondMatchesLocale = second.language.caseInsensitiveCompare(preferredVoiceCode) == .orderedSame
             return !firstMatchesLocale && secondMatchesLocale
-        } ?? AVSpeechSynthesisVoice(language: language)
+        } ?? AVSpeechSynthesisVoice(language: preferredVoiceCode)
     }
 }

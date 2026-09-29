@@ -1,24 +1,32 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var assistant = AssistantViewModel()
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 8) {
                 NavigationLink {
-                    TypeInputView()
+                    TypeInputView(assistant: assistant)
                 } label: {
                     Text("Type / Dictate")
+                        .foregroundStyle(.black)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 12))
                 }
                 .frame(maxHeight: .infinity)
+                .buttonStyle(.plain)
 
                 NavigationLink {
-                    VoiceInputView()
+                    VoiceInputView(assistant: assistant)
                 } label: {
                     Text("Full Voice")
+                        .foregroundStyle(.black)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 12))
                 }
                 .frame(maxHeight: .infinity)
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -27,7 +35,7 @@ struct ContentView: View {
 }
 
 private struct TypeInputView: View {
-    @StateObject private var assistant = AssistantViewModel()
+    @ObservedObject var assistant: AssistantViewModel
     @State private var draft = ""
 
     var body: some View {
@@ -68,7 +76,7 @@ private struct TypeInputView: View {
 }
 
 private struct VoiceInputView: View {
-    @StateObject private var assistant = AssistantViewModel()
+    @ObservedObject var assistant: AssistantViewModel
 
     var body: some View {
         VStack(spacing: 8) {

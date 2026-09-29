@@ -1,1 +1,19 @@
-WatchAI Watch App/Config/Secrets.xcconfig
+# Local credentials
+Secrets.xcconfig
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+
+# macOS and Xcode user data
+.DS_Store
+xcuserdata/
+*.xcuserstate
+
+# Build output
+DerivedData/
+build/
+.build/

@@ -1,19 +1,35 @@
 import Foundation
 
+struct ConversationTurn: Equatable {
+    let user: String
+    let assistant: String
+}
+
 struct MistralService {
     let apiKey: String
     let tavily: TavilyService
     var session: URLSession = .shared
 
-    func answer(to request: String) async throws -> String {
+    func answer(
+        to request: String,
+        language: AssistantLanguage,
+        history: [ConversationTurn] = []
+    ) async throws -> String {
         var messages = [
-            ChatMessage(role: "system", content: Self.systemPrompt),
-            ChatMessage(role: "system", content: Self.currentTime),
-            ChatMessage(role: "user", content: request)
+            ChatMessage(
+                role: "system",
+                content: Self.systemPrompt + "\n\nAnswer the newest user message in \(language.name), including after using a tool or when a tool fails."
+            ),
+            ChatMessage(role: "system", content: Self.currentTime)
         ]
+        for turn in history {
+            messages.append(ChatMessage(role: "user", content: turn.user))
+            messages.append(ChatMessage(role: "assistant", content: turn.assistant))
+        }
+        messages.append(ChatMessage(role: "user", content: request))
         var searchAvailable = true
 
-        // Messages live only for this call, including any tool results.
+        // Tool messages stay in this request; the view model retains completed turns.
         for _ in 0..<4 {
             try Task.checkCancellation()
             let reply = try await complete(messages: messages, allowSearch: searchAvailable)
@@ -102,6 +118,7 @@ struct MistralService {
     - If a number matters, say it once and stop. Don't repeat or hedge.
 
     Input rules:
+    - Earlier user and assistant messages are conversation history. The final user message is the new request. Use relevant history to understand follow-up questions, and answer only the new request.
     - The user may be dictating. If a word seems wrong or a request is ambiguous, ask ONE short clarifying question instead of guessing. Never ask more than one question per turn.
     - If the request is unanswerable, say so in one sentence and suggest the single best alternative action.
 
